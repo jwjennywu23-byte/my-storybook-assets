@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Where is It? Zip Can Help!</title>
-    <!-- 載入必要的函式庫 -->
+    <!-- 核心函式庫 -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -12,28 +12,45 @@
     <link href="https://cdn.jsdelivr.net/npm/lucide-static@0.321.0/font/lucide.min.css" rel="stylesheet">
     
     <style>
-        /* 避免平板點擊時出現藍色方塊 */
-        body { -webkit-tap-highlight-color: transparent; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        @import url('https://fonts.googleapis.com/css2?family=Lexend:wght@400;700&display=swap');
         
-        /* 單字發亮樣式 */
+        body { 
+            -webkit-tap-highlight-color: transparent; 
+            font-family: 'Lexend', sans-serif;
+            overflow-x: hidden;
+        }
+        
+        /* 互動發亮效果 */
         .active-word {
             background-color: #fbbf24;
             color: #78350f;
-            transform: scale(1.15) rotate(1deg);
-            box-shadow: 0 4px 10px rgba(251, 191, 36, 0.4);
+            transform: scale(1.1) rotate(1deg);
+            box-shadow: 0 4px 12px rgba(251, 191, 36, 0.4);
             border-radius: 8px;
+            z-index: 10;
         }
 
-        /* 自定義滑動條樣式 (平板友善) */
+        /* 平板友善的滑桿 */
+        input[type='range'] {
+            -webkit-appearance: none;
+            background: transparent;
+        }
         input[type='range']::-webkit-slider-thumb {
             -webkit-appearance: none;
-            height: 28px;
-            width: 28px;
+            height: 32px;
+            width: 32px;
             border-radius: 50%;
             background: #f59e0b;
             cursor: pointer;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-            border: 2px solid white;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            border: 3px solid white;
+            margin-top: -12px;
+        }
+        input[type='range']::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 8px;
+            background: #fef3c7;
+            border-radius: 4px;
         }
     </style>
 </head>
@@ -43,7 +60,11 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
-        // API Key 會由執行環境自動注入
+        /**
+         * 重要提示：
+         * 當您將此檔案部署到 GitHub Pages 時，
+         * 您需要在此處填入您的 Google API Key 才能使用語音功能。
+         */
         const apiKey = ""; 
 
         const App = () => {
@@ -52,6 +73,7 @@
             const [isLoading, setIsLoading] = useState(false);
             const [activeWordIndex, setActiveWordIndex] = useState(-1);
             const [speed, setSpeed] = useState(1.0);
+            const [showKeyAlert, setShowKeyAlert] = useState(false);
             const audioRef = useRef(null);
             const timerRef = useRef(null);
 
@@ -108,10 +130,6 @@
                 }
             ];
 
-            useEffect(() => {
-                if (audioRef.current) audioRef.current.playbackRate = speed;
-            }, [speed]);
-
             const pcmToWav = (pcmData, sampleRate) => {
                 const buffer = new ArrayBuffer(44 + pcmData.length * 2);
                 const view = new DataView(buffer);
@@ -137,6 +155,12 @@
 
             const speakText = async (text) => {
                 if (isPlaying) { stopAudio(); return; }
+                
+                if (!apiKey) {
+                    setShowKeyAlert(true);
+                    return;
+                }
+
                 setIsLoading(true);
                 setIsPlaying(true);
                 setActiveWordIndex(-1);
@@ -148,17 +172,17 @@
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            contents: [{ parts: [{ text: `Read this story page: ${text}` }] }],
+                            contents: [{ parts: [{ text }] }],
                             generationConfig: {
                                 responseModalities: ["AUDIO"],
-                                speechConfig: {
-                                    voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } }
-                                }
+                                speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } } }
                             }
                         })
                     });
 
                     const result = await response.json();
+                    if (!result.candidates) throw new Error("API Key Invalid");
+
                     const audioDataB64 = result.candidates[0].content.parts[0].inlineData.data;
                     const mimeType = result.candidates[0].content.parts[0].inlineData.mimeType;
                     const sampleRate = parseInt(mimeType.match(/sample_rate=(\d+)/)?.[1] || "24000");
@@ -175,35 +199,22 @@
                     if (audioRef.current) {
                         audioRef.current.src = url;
                         audioRef.current.playbackRate = speed;
-                        
                         audioRef.current.onloadedmetadata = () => {
                             const actualDuration = audioRef.current.duration / speed;
                             const timePerWord = (actualDuration * 1000) / words.length;
-                            
                             audioRef.current.play();
-                            
                             let currentWord = 0;
                             setActiveWordIndex(0);
-                            
-                            clearInterval(timerRef.current);
                             timerRef.current = setInterval(() => {
                                 currentWord++;
-                                if (currentWord < words.length) {
-                                    setActiveWordIndex(currentWord);
-                                } else {
-                                    clearInterval(timerRef.current);
-                                }
+                                if (currentWord < words.length) setActiveWordIndex(currentWord);
+                                else clearInterval(timerRef.current);
                             }, timePerWord);
                         };
-
-                        audioRef.current.onended = () => {
-                            setIsPlaying(false);
-                            setActiveWordIndex(-1);
-                            clearInterval(timerRef.current);
-                        };
+                        audioRef.current.onended = () => { setIsPlaying(false); setActiveWordIndex(-1); clearInterval(timerRef.current); };
                     }
                 } catch (error) {
-                    console.error("TTS Error:", error);
+                    console.error(error);
                     setIsPlaying(false);
                 } finally {
                     setIsLoading(false);
@@ -211,125 +222,93 @@
             };
 
             const stopAudio = () => {
-                if (audioRef.current) {
-                    audioRef.current.pause();
-                    audioRef.current.currentTime = 0;
-                }
-                setIsPlaying(false);
-                setActiveWordIndex(-1);
-                clearInterval(timerRef.current);
+                if (audioRef.current) { audioRef.current.pause(); audioRef.current.currentTime = 0; }
+                setIsPlaying(false); setActiveWordIndex(-1); clearInterval(timerRef.current);
             };
 
             const currentStory = storyData[currentPage];
             const words = currentStory.text.split(/\s+/);
 
             return (
-                <div className="min-h-screen flex flex-col items-center p-4 md:p-8 bg-[#FFFBEB]">
+                <div className="min-h-screen flex flex-col items-center p-4 md:p-8 bg-[#FFFBEB] select-none">
                     <audio ref={audioRef} className="hidden" />
                     
-                    {/* 標題與頁碼 */}
+                    {/* API 警告彈窗 */}
+                    {showKeyAlert && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+                            <div className="bg-white p-8 rounded-[2rem] shadow-2xl max-w-sm w-full text-center space-y-4">
+                                <div className="text-amber-500 mx-auto w-16 h-16 bg-amber-50 rounded-full flex items-center justify-center">
+                                    <i className="lucide-key text-3xl"></i>
+                                </div>
+                                <h2 className="text-2xl font-bold text-slate-800">尚未填寫 API Key</h2>
+                                <p className="text-slate-500 leading-relaxed">語音功能需要您的 Google API 金鑰才能運作。請在 index.html 檔案中找到 <b>const apiKey = ""</b> 並填入您的金鑰。</p>
+                                <button onClick={() => setShowKeyAlert(false)} className="w-full py-3 bg-amber-500 text-white rounded-full font-bold">我知道了</button>
+                            </div>
+                        </div>
+                    )}
+
                     <div className="max-w-5xl w-full flex justify-between items-center mb-6">
-                        <h1 className="text-2xl md:text-3xl font-black text-amber-800 flex items-center gap-3">
-                            <i className="lucide-volume-2 text-amber-600 scale-125"></i>
-                            Where is It? Zip Can Help!
-                        </h1>
-                        <div className="bg-amber-200 px-6 py-2 rounded-full text-amber-900 font-black shadow-inner">
+                        <div className="flex items-center gap-3">
+                            <div className="bg-white p-3 rounded-2xl shadow-md text-amber-600">
+                                <i className="lucide-book-open text-2xl"></i>
+                            </div>
+                            <h1 className="text-2xl md:text-3xl font-black text-amber-900">Zip Can Help!</h1>
+                        </div>
+                        <div className="bg-white/80 px-6 py-2 rounded-full text-amber-900 font-black shadow-sm border border-amber-200">
                             {currentPage + 1} / 10
                         </div>
                     </div>
 
-                    {/* 主卡片內容 */}
-                    <div className="max-w-6xl w-full bg-white rounded-[3rem] shadow-2xl flex flex-col md:flex-row min-h-[550px] overflow-hidden border-[12px] border-white ring-1 ring-amber-100">
-                        
+                    <div className="max-w-6xl w-full bg-white rounded-[3.5rem] shadow-2xl flex flex-col lg:flex-row min-h-[600px] overflow-hidden border-[12px] border-white relative">
                         {/* 圖片區 */}
-                        <div className="w-full md:w-1/2 bg-amber-50 p-6 flex items-center justify-center relative">
-                            <img 
-                                src={currentStory.img} 
-                                className="rounded-[2rem] shadow-xl w-full h-full object-cover border-4 border-white" 
-                                alt="story" 
-                            />
-                            <div className="absolute top-10 left-10 bg-white/90 backdrop-blur-sm px-4 py-1 rounded-full text-xs font-bold text-amber-800 shadow-sm">
-                                {currentStory.page}
-                            </div>
+                        <div className="w-full lg:w-3/5 bg-amber-50 p-6 flex items-center justify-center">
+                            <img src={currentStory.img} className="rounded-[2.5rem] shadow-lg w-full h-full object-cover border-2 border-white" alt="story" />
                         </div>
 
                         {/* 文字與控制區 */}
-                        <div className="w-full md:w-1/2 p-8 md:p-14 flex flex-col justify-between bg-gradient-to-br from-white to-amber-50/20">
+                        <div className="w-full lg:w-2/5 p-8 md:p-12 flex flex-col justify-between bg-gradient-to-br from-white to-amber-50/30">
                             <div className="flex-1 flex items-center">
-                                <p className="text-3xl md:text-4xl leading-[1.6] text-slate-800 font-semibold tracking-wide">
+                                <div className="text-3xl md:text-4xl leading-[1.6] text-slate-800 font-bold">
                                     {words.map((w, i) => (
                                         <span key={i} className={`inline-block mr-3 px-2 py-1 transition-all duration-300 ${i === activeWordIndex ? 'active-word' : ''}`}>
                                             {w}
                                         </span>
                                     ))}
-                                </p>
+                                </div>
                             </div>
 
-                            {/* 平板大控制按鈕 */}
                             <div className="mt-12 space-y-8 flex flex-col items-center">
-                                
-                                {/* 語速控制 */}
-                                <div className="w-full max-w-sm space-y-4 bg-amber-50/50 p-5 rounded-2xl border border-amber-100 shadow-inner">
+                                <div className="w-full space-y-4 bg-white/60 p-6 rounded-3xl border border-amber-100">
                                     <div className="flex justify-between items-center text-amber-700 font-black text-sm">
-                                        <div className="flex items-center gap-2"><i className="lucide-turtle"></i> 慢</div>
-                                        <span className="bg-amber-500 text-white px-3 py-1 rounded-full text-xs">語速: {speed.toFixed(1)}x</span>
-                                        <div className="flex items-center gap-2">快 <i className="lucide-rabbit"></i></div>
+                                        <div className="flex items-center gap-2"><i className="lucide-turtle"></i> SLOW</div>
+                                        <span className="bg-amber-100 text-amber-800 px-4 py-1 rounded-full">{speed.toFixed(1)}x</span>
+                                        <div className="flex items-center gap-2">FAST <i className="lucide-rabbit"></i></div>
                                     </div>
-                                    <input 
-                                        type="range" 
-                                        min="0.5" 
-                                        max="2.0" 
-                                        step="0.1" 
-                                        value={speed} 
-                                        onChange={e => setSpeed(parseFloat(e.target.value))} 
-                                        className="w-full h-4 bg-amber-200 rounded-lg appearance-none accent-amber-600 cursor-pointer" 
-                                    />
+                                    <input type="range" min="0.5" max="2.0" step="0.1" value={speed} onChange={e => setSpeed(parseFloat(e.target.value))} className="w-full" />
                                 </div>
 
-                                {/* 朗讀按鈕 */}
-                                <button 
-                                    onClick={() => speakText(currentStory.text)} 
-                                    disabled={isLoading} 
-                                    className={`w-full max-w-sm py-6 rounded-full font-black text-2xl text-white shadow-2xl transition-all active:scale-95 transform hover:-translate-y-1 flex items-center justify-center gap-4 ${
-                                        isLoading ? 'bg-slate-300' : isPlaying ? 'bg-rose-500 shadow-rose-200' : 'bg-amber-500 shadow-amber-200 hover:bg-amber-600'
-                                    }`}
-                                >
-                                    {isLoading ? (
-                                        <i className="lucide-loader-2 animate-spin"></i>
-                                    ) : isPlaying ? (
-                                        <><i className="lucide-square fill-current"></i> 停止播放</>
-                                    ) : (
-                                        <><i className="lucide-play fill-current"></i> 開始朗讀</>
-                                    )}
+                                <button onClick={() => speakText(currentStory.text)} disabled={isLoading} className={`w-full py-6 rounded-full font-black text-2xl text-white shadow-xl transition-all active:scale-95 flex items-center justify-center gap-4 ${isLoading ? 'bg-slate-300' : isPlaying ? 'bg-rose-500' : 'bg-amber-500'}`}>
+                                    {isLoading ? <i className="lucide-loader-2 animate-spin"></i> : isPlaying ? <><i className="lucide-square fill-current"></i> STOP</> : <><i className="lucide-volume-2"></i> READ ALOUD</>}
                                 </button>
                             </div>
                         </div>
                     </div>
 
-                    {/* 下方導航 */}
-                    <div className="max-w-4xl w-full mt-10 flex justify-between items-center px-4">
-                        <button 
-                            onClick={() => { stopAudio(); setCurrentPage(p => (p - 1 + 10) % 10); }} 
-                            className="flex items-center gap-2 text-amber-700 font-black text-xl p-4 hover:bg-amber-100 rounded-3xl transition-colors"
-                        >
-                            <i className="lucide-chevron-left text-3xl"></i> 上一頁
+                    <div className="max-w-4xl w-full mt-10 flex justify-between items-center">
+                        <button onClick={() => { stopAudio(); setCurrentPage(p => (p - 1 + 10) % 10); }} className="flex items-center gap-2 text-amber-700 font-black text-2xl p-6 hover:bg-amber-100 rounded-full transition-all active:scale-90">
+                            <i className="lucide-chevron-left text-4xl"></i>
                         </button>
                         
-                        <div className="hidden sm:flex gap-3">
+                        <div className="flex gap-4">
                             {storyData.map((_, idx) => (
-                                <div key={idx} className={`h-3 rounded-full transition-all duration-300 ${idx === currentPage ? 'w-10 bg-amber-600' : 'w-3 bg-amber-200'}`} />
+                                <button key={idx} onClick={() => { stopAudio(); setCurrentPage(idx); }} className={`h-4 rounded-full transition-all duration-500 ${idx === currentPage ? 'w-12 bg-amber-600 shadow-md' : 'w-4 bg-amber-200'}`} />
                             ))}
                         </div>
 
-                        <button 
-                            onClick={() => { stopAudio(); setCurrentPage(p => (p + 1) % 10); }} 
-                            className="flex items-center gap-2 text-amber-700 font-black text-xl p-4 hover:bg-amber-100 rounded-3xl transition-colors"
-                        >
-                            下一頁 <i className="lucide-chevron-right text-3xl"></i>
+                        <button onClick={() => { stopAudio(); setCurrentPage(p => (p + 1) % 10); }} className="flex items-center gap-2 text-amber-700 font-black text-2xl p-6 hover:bg-amber-100 rounded-full transition-all active:scale-90">
+                            <i className="lucide-chevron-right text-4xl"></i>
                         </button>
                     </div>
-                    
-                    <p className="mt-12 text-amber-800/40 font-bold text-xs tracking-widest uppercase">Wei and Zip's Learning Adventure</p>
                 </div>
             );
         };
